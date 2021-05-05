@@ -1,6 +1,6 @@
 #include <SPI.h>
 #include <mcp2515.h>
-// todo: удалить переменную temp
+
 #define BEEPER 9
 #define FRONT_LEFT 10
 #define FRONT_RIGHT 11
@@ -19,9 +19,6 @@ bool parkingLightEnabled = true;
 int doorBrightness[] = {closeDoorBrightness, closeDoorBrightness, closeDoorBrightness, closeDoorBrightness};
 bool doorState[] = {0, 0, 0, 0};
 int doorPin[] = {FRONT_LEFT, FRONT_RIGHT, REAR_LEFT, REAR_RIGHT};
-byte startOpenDoorBrightness = 1; // похоже хрень, пока ставлю 1 - потом скорее всего удалить
-
-int temp = 0;
 
 unsigned long lastChangeBrightness;
 
@@ -62,7 +59,6 @@ void setup()
   //pinMode(BEEPER, OUTPUT);
 
   lastChangeBrightness = millis();
-  temp = millis();
 }
 
 void loop()
@@ -80,8 +76,11 @@ void loop()
       // Первый байт состояние дверей, второй - света.
       checkDoors(canMsg.data[1], canMsg.data[2]);
     }
-    // писк для памяти сиденья
-    if (canMsg.can_id == 0x511 && canMsg.data[0] & 0xA == 0xA)
+
+    // эмуляция гонга для памяти сиденья, надо подобрать звук
+    // Нулевой байт пакета с ID 0x511, при нажатии кнопки сет и запоминании значения прилетают последовательно три пакета где этот байт вида: 
+    // для кнопки 1 (21 A1 21), для 2 (22 A2 22), для 3 (24 А4 24)
+    if (canMsg.can_id == 0x511 && canMsg.data[0] & 0xA0 == 0xA0)
     {
       beepSeat();
     }
@@ -92,6 +91,7 @@ void loop()
 
 void beepSeat()
 {
+  // Использование функции Tone() помешает использовать ШИМ на портах вход/выхода 3 и 11 (кроме платы Arduino Mega). todo
   tone(BEEPER, 1000, 500); // Звук прекратится через 500 мс, о программа останавливаться не будет!
 }
 
@@ -100,10 +100,6 @@ void changeDoorsLigthState()
   if (parkingLightEnabled)
   {
     closeDoorBrightness = 100;
-    /*if (millis() - temp > 10000)
-    {doorState[2] = 1;
-    closeDoorBrightness = 150;
-    }*/
   }
   else
   {
@@ -114,7 +110,7 @@ void changeDoorsLigthState()
   // Вроде настроено при PWM_STEP = 20, но возможно для повышения яркости белого без габаритов стоит задавать иное значение, т.к. там получается около 60 шагов, а не 255
   if (millis() - lastChangeBrightness > PWM_STEP)
   {
-    byte brStep = 1; //(millis() - lastChangeBrightness) / PWM_STEP;
+    byte brStep = 1;
 
     /*
     В цикле для каждой двери проверяем:
@@ -140,32 +136,17 @@ void changeDoorsLigthState()
         }
         else
         {
-          if (doorBrightness[i] > startOpenDoorBrightness)
+          if (doorBrightness[i] > 0)
           {
             doorBrightness[i] -= brStep;
-          }
-          else
-          {
-            doorBrightness[i] = 0;
           }
         }
       }
       else
       {
-        if (parkingLightEnabled && doorBrightness[i] < 255)
+        if (doorBrightness[i] < 255)
         {
           doorBrightness[i] += brStep;
-        }
-        if (!parkingLightEnabled)
-        {
-          if (doorBrightness[i] < startOpenDoorBrightness)
-          {
-            doorBrightness[i] = startOpenDoorBrightness;
-          }
-          else if (doorBrightness[i] < 255)
-          {
-            doorBrightness[i] += brStep;
-          }
         }
       }
       analogWrite(doorPin[i], doorBrightness[i]);
