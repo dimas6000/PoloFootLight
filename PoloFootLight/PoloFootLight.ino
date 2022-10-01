@@ -2,7 +2,8 @@
 #include <mcp2515.h>
 
 #define TEST_MODE true
-
+#define BEEPER_NEEDED false // Для бипера почти не тестилось, ибо не актуально стало для меня
+// Шим доступно на пинах 3, 5, 6, 9, 10, 11 в случае с ардуино на atmega328p
 #define BEEPER 9
 #define FRONT_LEFT 10
 #define FRONT_RIGHT 11
@@ -54,9 +55,16 @@ void setup()
     // Переделано по примеру по ссылке выше. Но почему тогда у меня работает фильтр для 470 id, надо разобраться.
     // Судя по коду setFilter так и должно быть, как для id470, а вот то что в нулевом буфере не сработает т.к. в коде setFilter нужные буферы не устанавливаются
     mcp2515.setConfigMode();
+
+#if BEEPER_NEEDED
     mcp2515.setFilterMask(MCP2515::MASK0, false, 0x0FFFF000);
     mcp2515.setFilter(MCP2515::RXF0, false, 0x0511AFFF);
     mcp2515.setFilter(MCP2515::RXF1, false, 0x0511AFFF);
+#else
+    mcp2515.setFilterMask(MCP2515::MASK0, false, 0x7FF);
+    mcp2515.setFilter(MCP2515::RXF0, false, 0x470);
+    mcp2515.setFilter(MCP2515::RXF1, false, 0x470);
+#endif
     mcp2515.setFilterMask(MCP2515::MASK1, false, 0x7FF);
     mcp2515.setFilter(MCP2515::RXF2, false, 0x470);
     mcp2515.setFilter(MCP2515::RXF3, false, 0x470);
@@ -95,6 +103,7 @@ void loop()
             checkDoors(canMsg.data[1], canMsg.data[2]);
         }
 
+#if BEEPER_NEEDED
         // эмуляция гонга для памяти сиденья, надо подобрать звук
         // Нулевой байт пакета с ID 0x511, при нажатии кнопки сет и запоминании значения прилетают последовательно три пакета где этот байт вида:
         // для кнопки 1 (21 A1 21), для 2 (22 A2 22), для 3 (24 А4 24)
@@ -104,6 +113,7 @@ void loop()
         {
             beepSeat();
         }
+#endif
 
 #if TEST_MODE
         Serial.println();
@@ -112,11 +122,13 @@ void loop()
     changeDoorsLigthState();
 }
 
+#if BEEPER_NEEDED
 void beepSeat()
 {
-    // Использование функции Tone() помешает использовать ШИМ на портах вход/выхода 3 и 11 (кроме платы Arduino Mega). todo
+    // Использование функции Tone() помешает использовать ШИМ на портах вход/выхода 3 и 11 (кроме платы Arduino Mega). 
     tone(BEEPER, 1000, 1500);
 }
+#endif
 
 void changeDoorsLigthState()
 {
@@ -195,7 +207,6 @@ void checkDoors(byte dataDoors, byte dataLigths)
         doorState[1] = 0;
         doorState[2] = 0;
         doorState[3] = 0;
-        return;
     }
     else
     {
