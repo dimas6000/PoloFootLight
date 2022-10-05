@@ -1,23 +1,23 @@
 #include <SPI.h>
 #include <mcp2515.h>
 
-#define TEST_MODE true
+#define TEST_MODE false
 #define BEEPER_NEEDED false // Для бипера почти не тестилось, ибо не актуально стало для меня
-// Шим доступно на пинах 3, 5, 6, 9, 10, 11 в случае с ардуино на atmega328p
+// Шим доступно на пинах 3, 5, 6, 9, 10, 11 в случае с ардуино на atmega328p, но 10 и 11 пины заняты подключением mcp2515
 #define BEEPER 9
-#define FRONT_LEFT 10
-#define FRONT_RIGHT 11
-#define REAR_LEFT 12
-#define REAR_RIGHT 8
+#define FRONT_LEFT 3
+#define FRONT_RIGHT 6
+#define REAR_LEFT 5
+#define REAR_RIGHT 9
 
 #define PWM_STEP 13 // Яркость это значение от 0 до 255, шаг изменения яркости это за сколько мс изменяется яркость на 1
 
 struct can_frame canMsg;
-MCP2515 mcp2515(53);
+MCP2515 mcp2515(10); // Нужно указать к какому пину подключен пин CS от MCP2515
 
 // Двери - { Передняя левая, Передняя правая, Задняя левая, Задняя правая }
 int closeDoorBrightness = 0;
-bool parkingLightEnabled = true;
+bool parkingLightEnabled = false;
 
 int doorBrightness[] = {closeDoorBrightness, closeDoorBrightness, closeDoorBrightness, closeDoorBrightness};
 bool doorState[] = {0, 0, 0, 0};
