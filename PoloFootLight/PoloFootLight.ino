@@ -1,19 +1,21 @@
+#include "can.h"
+#include "mcp2515.h"
+
 #include <SPI.h>
-#include <mcp2515.h>
 
 #define TEST_MODE false
-#define BEEPER_NEEDED false // Для бипера почти не тестилось, ибо не актуально стало для меня
 // Шим доступно на пинах 3, 5, 6, 9, 10, 11 в случае с ардуино на atmega328p, но 10 и 11 пины заняты подключением mcp2515
-#define BEEPER 9
 #define FRONT_LEFT 3
 #define FRONT_RIGHT 6
 #define REAR_LEFT 5
 #define REAR_RIGHT 9
 
-#define PWM_STEP 13 // Яркость это значение от 0 до 255, шаг изменения яркости это за сколько мс изменяется яркость на 1
+#define PWM_STEP 5 // Яркость это значение от 0 до 255, шаг изменения яркости это за сколько мс изменяется яркость на 1
 
 struct can_frame canMsg;
 MCP2515 mcp2515(10); // Нужно указать к какому пину подключен пин CS от MCP2515
+
+int redBrightness = 90; // Яркость фоновой подсветки на габаритах
 
 // Двери - { Передняя левая, Передняя правая, Задняя левая, Задняя правая }
 int closeDoorBrightness = 0;
@@ -24,6 +26,8 @@ bool doorState[] = {0, 0, 0, 0};
 int doorPin[] = {FRONT_LEFT, FRONT_RIGHT, REAR_LEFT, REAR_RIGHT};
 
 unsigned long lastChangeBrightness;
+
+int notUsedPins[] = {2,4,7,8,14,15,16,17,18,19,20,21};
 
 void setup()
 {
@@ -56,21 +60,17 @@ void setup()
     // Судя по коду setFilter так и должно быть, как для id470, а вот то что в нулевом буфере не сработает т.к. в коде setFilter нужные буферы не устанавливаются
     mcp2515.setConfigMode();
 
-#if BEEPER_NEEDED
-    mcp2515.setFilterMask(MCP2515::MASK0, false, 0x0FFFF000);
-    mcp2515.setFilter(MCP2515::RXF0, false, 0x0511AFFF);
-    mcp2515.setFilter(MCP2515::RXF1, false, 0x0511AFFF);
-#else
     mcp2515.setFilterMask(MCP2515::MASK0, false, 0x7FF);
     mcp2515.setFilter(MCP2515::RXF0, false, 0x470);
     mcp2515.setFilter(MCP2515::RXF1, false, 0x470);
-#endif
+
     mcp2515.setFilterMask(MCP2515::MASK1, false, 0x7FF);
     mcp2515.setFilter(MCP2515::RXF2, false, 0x470);
     mcp2515.setFilter(MCP2515::RXF3, false, 0x470);
     mcp2515.setFilter(MCP2515::RXF4, false, 0x470);
     mcp2515.setFilter(MCP2515::RXF5, false, 0x470);
     mcp2515.setNormalMode();
+
 
 #if TEST_MODE
     Serial.println("------- CAN Read ----------");
@@ -82,6 +82,11 @@ void setup()
     pinMode(REAR_LEFT, OUTPUT);
     pinMode(REAR_RIGHT, OUTPUT);
 
+    // Неиспользуемый выводы конфигурируем как вход, подтянуты к земле через 10ком
+    for (int notUsedPin : notUsedPins) { 
+      pinMode(notUsedPin, INPUT);      
+    }
+    
     lastChangeBrightness = millis();
 }
 
@@ -90,10 +95,18 @@ void loop()
     if (mcp2515.readMessage(&canMsg) == MCP2515::ERROR_OK)
     {
 #if TEST_MODE
+        // delay(1000);
         Serial.print(canMsg.can_id, HEX); // print ID
         Serial.print(" ");
         Serial.print(canMsg.can_dlc, HEX); // print DLC
         Serial.print(" ");
+        Serial.println();
+        for (int i = 0; i<8; i++)
+        {
+          Serial.print(canMsg.data[i], DEC);
+          Serial.print(" "); 
+        }
+        Serial.println();
 #endif
 
         // работа с яркостью подсветки дверей
@@ -103,18 +116,6 @@ void loop()
             checkDoors(canMsg.data[1], canMsg.data[2]);
         }
 
-#if BEEPER_NEEDED
-        // эмуляция гонга для памяти сиденья, надо подобрать звук
-        // Нулевой байт пакета с ID 0x511, при нажатии кнопки сет и запоминании значения прилетают последовательно три пакета где этот байт вида:
-        // для кнопки 1 (21 A1 21), для 2 (22 A2 22), для 3 (24 А4 24)
-        // Почему-то при побитовом умножении не работает, будто пропускает пакеты. Нужно проверить что с производительностью при этом
-        // С указанными значениями пакетов работает лучше, но не идеально почему-то. Возможно не может поймать  вовремя единичный пакет
-        if (canMsg.can_id == 0x511 && (canMsg.data[0] == 0xA4 || canMsg.data[0] == 0xA2 || canMsg.data[0] == 0xA1))
-        {
-            beepSeat();
-        }
-#endif
-
 #if TEST_MODE
         Serial.println();
 #endif
@@ -122,19 +123,11 @@ void loop()
     changeDoorsLigthState();
 }
 
-#if BEEPER_NEEDED
-void beepSeat()
-{
-    // Использование функции Tone() помешает использовать ШИМ на портах вход/выхода 3 и 11 (кроме платы Arduino Mega). 
-    tone(BEEPER, 1000, 1500);
-}
-#endif
-
 void changeDoorsLigthState()
 {
     if (parkingLightEnabled)
     {
-        closeDoorBrightness = 100;
+        closeDoorBrightness = redBrightness;
     }
     else
     {
@@ -148,23 +141,56 @@ void changeDoorsLigthState()
         byte brStep = 1;
 
         /*
-	В цикле для каждой двери проверяем:
-	1) если дверь закрыта, то меняем яркость до уровня требуемой при закрытой двери (зависит от состояния габаритных огней). 
-	Если габариты выключены, то плавно уменьшаем яркость белого цвета, а потом гасим полностью @todo: сделать вольтметр и проверять напряжение, чтобы гасить правильно.
-	2) если дверь открыта, то при включенных габаритах просто плавно повышаем яркость до 255, а при выключенных сразу ставим яркость на начало включения белого цвета
-	и далее плавно повышаем до 255.
-	*/
+  В цикле для каждой двери проверяем:
+  1) если дверь закрыта, то меняем яркость до уровня требуемой при закрытой двери (зависит от состояния габаритных огней). 
+  Если габариты выключены, то плавно уменьшаем яркость белого цвета, а потом гасим полностью @todo: сделать вольтметр и проверять напряжение, чтобы гасить правильно.
+  2) если дверь открыта, то при включенных габаритах просто плавно повышаем яркость до 255, а при выключенных сразу ставим яркость на начало включения белого цвета
+  и далее плавно повышаем до 255.
+  */
+      // 0 - дверь водителя, 1 - переднего пассажира, 2 - левая задняя, 3 - правая задняя
         for (byte i = 0; i <= 3; i++)
         {
             if (doorState[i] == 0)
             {
                 if (parkingLightEnabled)
                 {
-                    if (doorBrightness[i] > closeDoorBrightness)
+                    int brightModifier = 1;
+
+                    // Тут просто данные? они изначально из кан, число от 20 до ~90. Причем число менятся будт ов зависимости от напряжения в бортсети
+                    // Модифицируем
+                    int closeDoorBrightnessLocal = (closeDoorBrightness-20)*1.8; 
+                    
+                    // Делаем тусклее красную подсветку у водителя
+                    if (i == 0)
+                    {
+                       closeDoorBrightnessLocal = closeDoorBrightnessLocal * 0.65;
+                    }
+                    // Делаем ярче красную подсветку у переднего пассажира
+                    if (i == 1)
+                    {
+                       closeDoorBrightnessLocal = closeDoorBrightnessLocal * 1.5;
+                    }
+
+                    // Проверим, что число не больше 150, т.к. если больше - есть риск что загорится уже белая подсветка
+                    if (closeDoorBrightnessLocal > 150)
+                    {
+                      closeDoorBrightnessLocal = 150;
+                    }
+
+                      #if TEST_MODE
+                       /*
+                        Serial.print(i);
+                        Serial.print(" ");
+                        Serial.print(closeDoorBrightnessLocal);
+                        Serial.print(" | ");
+                        */
+                      #endif
+                    
+                    if (doorBrightness[i] > closeDoorBrightnessLocal)
                     {
                         doorBrightness[i] -= brStep;
                     }
-                    if (doorBrightness[i] < closeDoorBrightness)
+                    if (doorBrightness[i] < closeDoorBrightnessLocal)
                     {
                         doorBrightness[i] += brStep;
                     }
@@ -190,13 +216,13 @@ void changeDoorsLigthState()
     }
 }
 
-void checkDoors(byte dataDoors, byte dataLigths)
+void checkDoors(byte dataDoors, byte dataLights)
 {
 #if TEST_MODE
-    Serial.println('Байт данных для дверей:');
+    Serial.println("dataDoors:");
     Serial.println(dataDoors);
-    Serial.println('Байт данных для света:');
-    Serial.println(dataLigths);
+    Serial.println("dataLights:");
+    Serial.println(dataLights);
 #endif
     if (!(dataDoors & 0b00001111))
     {
@@ -259,12 +285,23 @@ void checkDoors(byte dataDoors, byte dataLigths)
         }
     }
 
-    if (dataLigths & (0b01000000))
+    // Условие для поло без возможности регулировки яркости подсветки. 
+    // if (dataLights & (0b01000000)), иначе по описанию ниже
+    // Если яркость подсветки салона регулируется, то число меняется от примерно 20 до 80 на заведенной машине
+    // И видел до 90 на заглушенной. Видимо BCM подстраивает значение в зависимости от выходного напряжения. 
+    // Как я понял, в этом байте именно заданная яркость подсветки салона (кнопок и т.п.). При этом если подсветка выключена - тут 0 будет
+    if (dataLights > 20)
     {
-#if TEST_MODE
-        Serial.println("габариты включены");
-#endif
         parkingLightEnabled = true;
+
+        // Это для Поло с регулировкой яркости подсветки, если регулятора нет - или оставить так и будет дефолтная яркость авто передаваемая в can (вроде 64), 
+        // или просто удалить эту строку и будет 90
+        redBrightness = dataLights; 
+        
+        #if TEST_MODE
+        Serial.println("габариты включены");
+        Serial.println(redBrightness);
+        #endif
     }
     else
     {
